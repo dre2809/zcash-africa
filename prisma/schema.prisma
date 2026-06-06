@@ -1,0 +1,296 @@
+// ============================================================
+// Zcash Africa – Prisma Schema
+// ============================================================
+// Engine: PostgreSQL
+// ORM: Prisma
+// Designed for multi-community expansion across Africa.
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ────────────────────────────────────────────
+// ENUMS
+// ────────────────────────────────────────────
+
+enum UserRole {
+  SUPER_ADMIN
+  COMMUNITY_ADMIN
+  CONTRIBUTOR
+  PUBLIC
+}
+
+enum ContentStatus {
+  DRAFT
+  PENDING
+  PUBLISHED
+}
+
+enum EventType {
+  MEETUP
+  WORKSHOP
+  HACKATHON
+  CONFERENCE
+  ONLINE
+  OTHER
+}
+
+enum BlogCategory {
+  COMMUNITY_UPDATES
+  EDUCATION
+  DEVELOPER
+  ECOSYSTEM
+  EVENT_REPORTS
+}
+
+// ────────────────────────────────────────────
+// COMMUNITY
+// ────────────────────────────────────────────
+
+model Community {
+  id          String   @id @default(cuid())
+  name        String
+  // URL-safe identifier, e.g. "zcash-nigeria"
+  slug        String   @unique
+  description String?  @db.Text
+  // Geographic region within Africa, e.g. "West Africa"
+  region      String?
+  logo        String?
+  banner      String?
+  website     String?
+  telegram    String?
+  xAccount    String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relationships
+  events      Event[]
+  posts       BlogPost[]
+  ambassadors Ambassador[]
+  users       User[]
+  media       Media[]
+
+  @@index([slug])
+}
+
+// ────────────────────────────────────────────
+// AMBASSADOR
+// ────────────────────────────────────────────
+
+model Ambassador {
+  id          String    @id @default(cuid())
+  name        String
+  photo       String?
+  // e.g. "Lead Ambassador", "Community Manager"
+  role        String?
+  bio         String?   @db.Text
+  country     String?
+  xAccount    String?
+  telegram    String?
+
+  communityId String
+  community   Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime  @default(now())
+
+  @@index([communityId])
+}
+
+// ────────────────────────────────────────────
+// EVENT
+// ────────────────────────────────────────────
+
+model Event {
+  id             String        @id @default(cuid())
+  title          String
+  slug           String        @unique
+  description    String?       @db.Text
+  eventDate      DateTime
+  location       String?
+  eventType      EventType     @default(OTHER)
+  featuredImage  String?
+  // Array of Cloudinary URLs stored as JSON
+  gallery        Json?         @default("[]")
+  attendance     Int?          @default(0)
+  status         ContentStatus @default(DRAFT)
+
+  communityId    String
+  community      Community     @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  // Who submitted / last edited (nullable for seed data)
+  authorId       String?
+  author         User?         @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  // Full-text search vector (populated via DB trigger or application layer)
+  searchVector   String?       @db.Text
+
+  @@index([communityId])
+  @@index([status])
+  @@index([eventDate])
+  @@index([slug])
+}
+
+// ────────────────────────────────────────────
+// BLOG POST
+// ────────────────────────────────────────────
+
+model BlogPost {
+  id             String        @id @default(cuid())
+  title          String
+  slug           String        @unique
+  excerpt        String?       @db.Text
+  // Stored as Portable Text JSON (Sanity) or plain HTML
+  content        Json?
+  featuredImage  String?
+  category       BlogCategory  @default(COMMUNITY_UPDATES)
+  // Tags stored as a string array in PostgreSQL
+  tags           String[]      @default([])
+  status         ContentStatus @default(DRAFT)
+  publishedAt    DateTime?
+
+  authorId       String
+  author         User          @relation(fields: [authorId], references: [id], onDelete: Restrict)
+
+  communityId    String
+  community      Community     @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  searchVector   String?       @db.Text
+
+  @@index([communityId])
+  @@index([status])
+  @@index([authorId])
+  @@index([category])
+  @@index([slug])
+  @@index([publishedAt])
+}
+
+// ────────────────────────────────────────────
+// USER
+// ────────────────────────────────────────────
+
+model User {
+  id          String    @id @default(cuid())
+  name        String?
+  email       String    @unique
+  // OAuth avatar or uploaded photo
+  image       String?
+  role        UserRole  @default(PUBLIC)
+
+  // Null for SUPER_ADMIN; required for COMMUNITY_ADMIN and CONTRIBUTOR
+  communityId String?
+  community   Community? @relation(fields: [communityId], references: [id], onDelete: SetNull)
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // NextAuth relations
+  accounts    Account[]
+  sessions    Session[]
+
+  // Content relations
+  posts       BlogPost[]
+  events      Event[]
+
+  @@index([email])
+  @@index([role])
+  @@index([communityId])
+}
+
+// ────────────────────────────────────────────
+// MEDIA
+// ────────────────────────────────────────────
+
+model Media {
+  id            String    @id @default(cuid())
+  title         String?
+  imageUrl      String
+  // Cloudinary public_id for transformations / deletion
+  cloudinaryId  String    @unique
+  altText       String?
+
+  communityId   String
+  community     Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  uploadedById  String?
+  uploadedBy    User?     @relation(fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  createdAt     DateTime  @default(now())
+
+  @@index([communityId])
+  @@index([cloudinaryId])
+}
+
+// Add Media → User FK to User model via additional relation
+// (Prisma requires explicit field on both sides)
+// This is declared on Media.uploadedBy above.
+
+// ────────────────────────────────────────────
+// NEXTAUTH – required tables
+// ────────────────────────────────────────────
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ────────────────────────────────────────────
+// NEWSLETTER SUBSCRIBER (future-proofing)
+// ────────────────────────────────────────────
+
+model NewsletterSubscriber {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  // Optional: subscriber opted into a specific community newsletter
+  communityId String?
+  confirmed   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([email])
+}
